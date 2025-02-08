@@ -1,0 +1,82 @@
+{
+  "QueryLanguage": "JSONata",
+  "Comment": "A description of my state machine",
+  "StartAt": "StartFlightS3RawCrawler",
+  "States": {
+    "StartFlightS3RawCrawler": {
+      "Type": "Task",
+      "Arguments": {
+        "Name": "daily_raw_flights_crawler"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
+      "Next": "GetCrawlerStatus"
+    },
+    "GetCrawlerStatus": {
+      "Type": "Task",
+      "Arguments": {
+        "Name": "daily_raw_flights_crawler"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:glue:getCrawler",
+      "Output": {
+        "CrawlerState": "{% $states.result.Crawler.State %}"
+      },
+      "Next": "CheckAndWait"
+    },
+    "CheckAndWait": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Next": "WaitIfRunning",
+          "Condition": "{% $states.input.CrawlerState = 'RUNNING' %}"
+        }
+      ],
+      "Default": "TriggerGlueJob"
+    },
+    "WaitIfRunning": {
+      "Type": "Wait",
+      "Seconds": 10,
+      "Next": "GetCrawlerStatus"
+    },
+    "TriggerGlueJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Arguments": {
+        "JobName": "airlines_incremental_data_processing_etl"
+      },
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "Next": "GlueJobFailedNotification"
+        }
+      ],
+      "Next": "GlueJobSuccessNotification"
+    },
+    "GlueJobSuccessNotification": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Arguments": {
+        "TopicArn": "arn:aws:sns:us-east-1:851725469799:test_sns_v1",
+        "Message": {
+          "Job": "Airline Data Processing Glue Job",
+          "Status": "Success"
+        }
+      },
+      "End": true
+    },
+    "GlueJobFailedNotification": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Arguments": {
+        "TopicArn": "arn:aws:sns:us-east-1:851725469799:test_sns_v1",
+        "Message": {
+          "Job": "Airline Data Processing Glue Job",
+          "Status": "Failed",
+          "Error": "{% $states %}"
+        }
+      },
+      "End": true
+    }
+  }
+}

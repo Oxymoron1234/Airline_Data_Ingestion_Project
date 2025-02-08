@@ -1,0 +1,85 @@
+{
+  "Comment": "A description of my state machine",
+  "StartAt": "Start_flight_s3_crawler",
+  "States": {
+    "Start_flight_s3_crawler": {
+      "Type": "Task",
+      "Arguments": {
+        "Name": "daily_raw_flight_crawler"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
+      "Next": "Get_crawler_status"
+    },
+    "Get_crawler_status": {
+      "Type": "Task",
+      "Arguments": {
+        "Name": "daily_raw_flight_crawler"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:glue:getCrawler",
+      "Output": {
+        "crawler_state_result": "{% $states.result.Crawler.State %}"
+      },
+      "Next": "check_and_wait"
+    },
+    "check_and_wait": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Next": "Wait_if_running",
+          "Condition": "{% $states.input.crawler_state_result = 'RUNNING' %}",
+          "Output": {
+            "output": "{% $states %}"
+          }
+        }
+      ],
+      "Default": "trigger_glue_job"
+    },
+    "Wait_if_running": {
+      "Type": "Wait",
+      "Seconds": 10,
+      "Next": "Get_crawler_status"
+    },
+    "trigger_glue_job": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Arguments": {
+        "JobName": "airline_increment_data_processing"
+      },
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "Next": "glue_job_fail_notification"
+        }
+      ],
+      "Next": "glue_job_pass_notification"
+    },
+    "glue_job_pass_notification": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Arguments": {
+        "Message": {
+          "Job": "airline_increment_data_processing",
+          "Status": "Glue job pass"
+        },
+        "TopicArn": "arn:aws:sns:ap-south-1:872515267566:sns_email_test"
+      },
+      "End": true
+    },
+    "glue_job_fail_notification": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Arguments": {
+        "TopicArn": "arn:aws:sns:ap-south-1:872515267566:sns_email_test",
+        "Message": {
+          "Job": "airline_increment_data_processing",
+          "Status": "Glue job failed",
+          "Error": "{% $states %}"
+        }
+      },
+      "End": true
+    }
+  },
+  "QueryLanguage": "JSONata"
+}
